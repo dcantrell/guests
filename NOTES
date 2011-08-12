@@ -1,0 +1,60 @@
+======================
+HOST OPERATING SYSTEMS
+======================
+
+1) Edit guests.conf to your system.  By default, the host will have
+   a tun10 network device created using 172.31.1.1 as the IP address.
+   Guests will live on 172.31.1.0/24.  The default tunnel device is
+   tun10 to avoid conflicts with software such as vpnc.  The default
+   bridge device should be fine unless bridge0 is already in use on
+   your system.
+
+2) Add pf rules to NAT all guests through to your Internet connection.
+   For my system, I have two Internet-capable interfaces.  I add these
+   rules to pf.conf:
+
+       # NAT for qemu guests
+       pass out on iwn0 from 172.31.1.0/24 to any nat-to iwn0
+       pass out on em0 from 172.31.1.0/24 to any nat-to em0
+
+   This handles all use cases, regardless of which network interface I
+   am actually using.  For laptops, this is really useful since you
+   will change your network connection often.
+
+   NOTE: You may have to disable pf if you take your laptop somewhere
+   all network interfaces are down.  Even if you bring it back up, you
+   will still hit browser issues that makes it look likr your network
+   is hosed.  Simple solution after you bring up a connection:
+
+       pfctl -d
+       pfctl -e
+       pfctl -f /etc/pf.conf
+
+
+=======================
+GUEST OPERATING SYSTEMS
+=======================
+
+Fedora 14
+    1) Boot with 'noapic' kernel option.
+    2) After install, switch to tty2 and edit /mnt/sysimage/etc/grub.conf
+           a) Make sure 'console=ttyS0' is on the kernel command line.
+           b) Add 'terminal serial' to the main grub configuration.
+    3) Make sure the eth* lines are removed from:
+           /mnt/sysimage/etc/udev/rules.d/70-persistent-net.rules
+       On boot up, a new rule will be added for eth0 with the correct MAC
+       address.
+    4) Edit /mnt/sysimage/etc/sysconfig/network-scripts/ifcfg-eth0 for
+       static networking.  Add:
+           IPADDR=
+           MACADDR=
+           NETMASK=255.255.255.0
+           BROADCAST=172.31.1.255
+           DNS1=4.2.2.2
+           DOMAIN=virt.burdell.org
+    5) Edit /mnt/sysimage/etc/sysconfig/network and set the HOSTNAME and
+       GATEWAY=172.31.1.1
+    6) On initial reboot, log in as root and disable the following units:
+           for unit in capi isdn mdmonitor netfs NetworkManager pcscd ypbind ; do
+               systemctl disable ${unit}.service
+           done

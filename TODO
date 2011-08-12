@@ -1,0 +1,6 @@
+- Support per-guest arch settings
+- Clean up exit codes
+- Clean up stdio/stderr usage and log messages
+- If run from an interactive shell, send msgs to stdout
+- If run from rc.local, send msgs to syslog
+- Fix guests_start() so that serial and monitor ports do not collide

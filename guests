@@ -1,0 +1,432 @@
+#!/bin/ksh
+#
+# guests
+# Manage qemu guests on an OpenBSD box
+#
+# Copyright (C) 2011  David L. Cantrell Jr. <david.l.cantrell@gmail.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+VER="1.0"
+
+PATH=/bin:/sbin:/usr/bin:/usr/local/bin
+RUN=/var/run/qemu
+
+CMD="$(basename ${0})"
+CWD="$(pwd)"
+CONF=${CWD}/guests.conf
+CONFD="${CWD}/guests.d"
+
+if [ ! -f "${CONF}" ]; then
+    echo "Configuration file ${CONF} missing." >&2
+    exit 1
+fi
+
+. ${CONF}
+
+if [ ! "$(id -u)" = "0" ]; then
+    echo "You must be root to run ${CMD}, exiting." >&2
+    exit 1
+fi
+
+usage() {
+    echo "Usage: ${CMD} <options> [command]" >&2
+    echo "Options:" >&2
+    echo "    -d                                   Enable debugging mode" >&2
+    echo "    -s                                   Automatically start serial console" >&2
+    echo "                                         connection (only valid for start)" >&2
+    echo "    -h                                   Display this screen and exit" >&2
+    echo "    -V                                   Display version information and exit" >&2
+    echo "Commands:" >&2
+    echo "    start <guest>...                     Start guest networking and guest(s)" >&2
+    echo "    stop <guest>...                      Stop guest networking and guest(s)" >&2
+    echo "    install [guest] [size] [iso] <arch>  Install guest with the disk image" >&2
+    echo "                                         size specified (in qemu-img syntax)" >&2
+    echo "                                         and using the ISO9660 file as the" >&2
+    echo "                                         install source.  Optional arch" >&2
+    echo "                                         values listed below." >&2
+    echo "    list                                 List guest names and descriptions" >&2
+    echo
+    echo "The optional guest name for the start and stop commands allow you to work with" >&2
+    echo "one or more specific guests.  If no guest names are given, all guests will" >&2
+    echo "start or stop depending on the command given." >&2
+    echo
+    echo "The optional arch name is one of:" >&2
+
+    find /usr/local/bin -name "qemu-system-*" -maxdepth 1 | \
+    while read line ; do
+        n="$(echo $(basename $line) | cut -d '-' -f 3)"
+        if [ "${n}" = "${GUEST_ARCH}" ]; then
+            echo "    ${n} (default)" >&2
+        else
+            echo "    ${n}" >&2
+        fi
+    done
+
+    exit 1
+}
+
+generate_mac_address() {
+    tries=0
+
+    # try at most 20 times to generate a unique MAC address
+    while [ ${tries} -le 20 ]; do
+        mac="00:bd:$(printf %02x $((${RANDOM} % 256))):"
+        mac="${mac}$(printf %02x $((${RANDOM} % 256))):"
+        mac="${mac}$(printf %02x $((3 % 256))):$(printf %02x 4)"
+
+        grep -q -i -E "^GUEST_MACADDR=${mac}$" ${CONFD}/* 2>/dev/null
+        RETVAL=$?
+        if [ ${RETVAL} -eq 0 ]; then
+            tries=$((${tries} + 1))
+        elif [ ${RETVAL} -eq 1 ]; then
+            echo ${mac}
+            return
+        else
+            echo "Unrecoverable error." >&2
+            exit 1
+        fi
+    done
+
+    echo "Unable to generate a unique MAC address, exiting." >&2
+    exit 1
+}
+
+get_guest_profile_names() {
+    find ${CWD}/guests.d -type f -name "*.conf" -exec basename {} .conf \;
+}
+
+guests_stop() {
+    if [ -z "$*" ]; then
+        GUESTS="$(get_guest_profile_names)"
+    else
+        GUESTS="$*"
+    fi
+
+    [ -z "${GUESTS}" ] && exit 2
+
+    for guest in ${GUESTS} ; do
+        guestconf="${CWD}/guests.d/${guest}.conf"
+        pidfile="${RUN}/${guest}.pid"
+
+        if [ ! -f ${guestconf} ]; then
+            logger "${CMD}: ${guest} is not a valid guest configuration"
+            continue
+        fi
+
+        if [ ! -s ${pidfile} ]; then
+            logger "${CMD}: ${guest} not running"
+            continue
+        fi
+
+        logger "${CMD}: shutting down guest ${guest}"
+        kill $(cat ${pidfile}) && rm -f ${pidfile}
+    done
+
+    ifconfig | grep -q ${HOST_TUNNEL}
+    [ $? -eq 0 ] && ifconfig ${HOST_TUNNEL} destroy
+
+    ifconfig | grep -q ${HOST_BRIDGE}
+    [ $? -eq 0 ] && ifconfig ${HOST_BRIDGE} destroy
+}
+
+guests_start() {
+    if [ -z "$*" ]; then
+        GUESTS="$(get_guest_profile_names)"
+    else
+        GUESTS="$*"
+    fi
+
+    [ -z "${GUESTS}" ] && exit 2
+
+    # make sure the tun interface is available
+    if [ ! -c /dev/${HOST_TUNNEL} ]; then
+        ( cd /dev && ./MAKEDEV ${HOST_TUNNEL} )
+    fi
+
+    ifconfig | grep -q ${HOST_TUNNEL}
+    [ $? -eq 1 ] && ifconfig ${HOST_TUNNEL} ${HOST_IP_ADDRESS} link0
+
+    ifconfig | grep -q ${HOST_BRIDGE}
+    if [ $? -eq 1 ]; then
+        ifconfig ${HOST_BRIDGE} create
+        ifconfig ${HOST_BRIDGE} add ${HOST_TUNNEL}
+        for hostdev in ${HOST_NETWORK_DEVS} ; do
+            ifconfig ${HOST_BRIDGE} add ${hostdev}
+        done
+        ifconfig ${HOST_BRIDGE} up
+    fi
+
+    offset=0
+    sport=1010
+    mport=2010
+    for guest in ${GUESTS} ; do
+        guestconf="${CWD}/guests.d/${guest}.conf"
+        pidfile="${RUN}/${guest}.pid"
+
+        if [ ! -f ${guestconf} ]; then
+            logger "${CMD}: ${guest} is not a valid guest configuration"
+            continue
+        fi
+
+        if [ -s ${pidfile} ]; then
+            logger "${CMD}: ${guest} may be running, skipping startup"
+            continue
+        fi
+
+        unset GUEST_IMAGE
+        unset GUEST_MACADDR
+        unset GUEST_ARCH
+        . ${guestconf}
+
+        if [ -z "${GUEST_MACADDR}" ]; then
+            # this handles newly installed guests
+            GUEST_MACADDR="$(generate_mac_address)"
+            echo "GUEST_MACADDR=${GUEST_MACADDR}" >> ${guestconf}
+        fi
+
+        [ -z "${GUEST_ARCH}" ] && GUEST_ARCH="${GUEST_ARCH_DEFAULT}"
+
+        QEMU="qemu-system-${GUEST_ARCH}"
+        which ${QEMU} >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            echo "${GUEST_ARCH} is not a valid qemu architecture, exiting." >&2
+            exit 1
+        fi
+
+        # find unused local ports to use for serial and monitor connections
+        portsearch=1
+        while [ ${portsearch} -eq 1 ]; do
+            portsearch=0
+
+            serialport=$((${sport} + ${offset}))
+            nc 127.0.0.1 ${serialport} < /dev/null > /dev/null 2>&1
+            [ $? -ne 0 ] && portsearch=1
+
+            monitorport=$((${mport} + ${offset}))
+            nc 127.0.0.1 ${monitorport} < /dev/null > /dev/null 2>&1
+            [ $? -ne 0 ] && portsearch=1
+
+            offset=$((${offset} + 1))
+        done
+
+        # if user passed debug flag, do not daemonize or redirect monitor port
+        if [ "${DEBUG}" = "y" ]; then
+            common_opts="-pidfile ${pidfile}"
+            serial_opts="-serial telnet:127.0.0.1:${serialport},server,nowait"
+            monitor_opts="-monitor stdio"
+        else
+            common_opts="-daemonize -nographic -pidfile ${pidfile}"
+            serial_opts="-serial telnet:127.0.0.1:${serialport},server,nowait"
+            monitor_opts="-monitor telnet:127.0.0.1:${monitorport},server,nowait"
+        fi
+
+        [ "${GUEST_ARCH}" = "x86_64" ] && common_opts="${common_opts} -no-fd-bootchk"
+
+        # options specific to this guest (memory, disk image, network adapter)
+        guest_opts="-m ${GUEST_MEM} -hda ${GUEST_IMAGE}"
+        nic_opts="-net nic,vlan=0,macaddr=${GUEST_MACADDR}"
+        tap_opts="-net tap,vlan=0,fd=3 3<> /dev/${HOST_TUNNEL}"
+
+        # start the guest
+        guest_cmd="${QEMU} ${guest_opts} ${common_opts} ${serial_opts} ${monitor_opts} ${nic_opts} ${tap_opts}"
+
+        logger "${CMD}: starting qemu guest: sh -c ${guest_cmd}"
+        logger "${CMD}: guest ${guest} serial console: telnet 127.0.0.1 ${serialport}"
+        logger "${CMD}: guest ${guest} monitor: telnet 127.0.0.1 ${monitorport}"
+
+        sh -c "${guest_cmd}"
+        RETVAL=$?
+
+        echo "${guest}"
+        echo "    serial console: telnet 127.0.0.1 ${serialport}"
+        echo "    monitor: telnet 127.0.0.1 ${monitorport}"
+
+        if [ "${SERIAL}" = "y" ]; then
+            ${HOST_TERM} -e sh -c "telnet 127.0.0.1 ${serialport}" &
+        fi
+
+        [ ${RETVAL} -ne 0 ] && return
+    done
+}
+
+guests_install() {
+    GUEST="${1}"
+    SIZE="${2}"
+    ISO="${3}"
+    ARCH="${4}"
+
+    [ -z "${GUEST}" -o -z "${SIZE}" -o -z "${ISO}" ] && usage
+
+    if [ -z "${ARCH}" ]; then
+        ARCH="${GUEST_ARCH_DEFAULT}"
+    fi
+
+    QEMU="qemu-system-${ARCH}"
+    which ${QEMU} >/dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "${ARCH} is not a valid qemu architecture, exiting." >&2
+        exit 1
+    fi
+
+    GUEST_IMAGE="${CWD}/${1}.img"
+    guestconf="${CWD}/guests.d/${GUEST}.conf"
+
+    if [ -f ${GUEST_IMAGE} ]; then
+        echo "${CMD}: image file for ${1} already exists, exiting" >&2
+        exit 1
+    fi
+
+    if [ ! -f ${ISO} ]; then
+        echo "${CMD}: cannot find install media ${ISO}, exiting" >&2
+        exit 1
+    fi
+
+    qemu-img create -f qcow2 ${GUEST_IMAGE} ${SIZE}
+    RETVAL=$?
+    [ ${RETVAL} -ne 0 ] && return
+
+    guest_opts="-m ${GUEST_MEM} -hda ${GUEST_IMAGE}"
+    common_opts="-monitor stdio"
+    [ "${ARCH}" = "x86_64" ] && common_opts="${common_opts} -no-fd-bootchk"
+    install_opts="-cdrom ${ISO} -boot d"
+
+    ${QEMU} ${guest_opts} ${common_opts} ${install_opts}
+    RETVAL=$?
+    [ ${RETVAL} -ne 0 ] && return
+
+    if [ -f ${guestconf} ]; then
+        echo "GUEST_ARCH=${ARCH}" >> ${guestconf}
+    else
+        echo "GUEST_ARCH=${ARCH}" > ${guestconf}
+    fi
+
+    echo "GUEST_IMAGE=${GUEST_IMAGE}" >> ${guestconf}
+}
+
+guests_list() {
+    if [ -z "$*" ]; then
+        GUESTS="$(get_guest_profile_names)"
+    else
+        GUESTS="$*"
+    fi
+
+    [ -z "${GUESTS}" ] && exit 2
+
+    first=1
+    for guest in ${GUESTS} ; do
+        guestconf="${CWD}/guests.d/${guest}.conf"
+
+        if [ ! -f ${guestconf} ]; then
+            logger "${CMD}: ${guest} is not a valid guest configuration"
+            continue
+        fi
+
+        unset GUEST_IMAGE
+        unset GUEST_MACADDR
+        . ${guestconf}
+
+        pidfile=${RUN}/${guest}.pid
+        status="stopped"
+        if [ -f ${pidfile} ]; then
+            ps -p "$(cat ${pidfile})" >/dev/null 2>&1
+            [ $? -eq 0 ] && status="running" || status="stopped"
+        fi
+
+        [ ${first} -ne 1 ] && echo
+        echo "${guest} (${status})"
+        [ ! -z "${GUEST_DESC}" ] && echo "    ${GUEST_DESC}"
+
+        first=0
+    done
+}
+
+[ ! -d ${RUN} ] && mkdir -p ${RUN}
+[ ! -d ${CONFD} ] && mkdir -p ${CONFD}
+
+args=$(getopt dshV $*)
+[ $? -ne 0 ] && usage
+set -- ${args}
+while [ $# -ge 0 ]; do
+    case "$1" in
+        -d)
+            DEBUG=y
+            shift
+            ;;
+        -s)
+            if [ -z "${HOST_TERM}" ]; then
+                echo "Missing HOST_TERM setting in ${CONF}." >&2
+                exit 1
+            fi
+
+            host_term_actual=$(which ${HOST_TERM} 2>/dev/null)
+            if [ $? -ne 0 ]; then
+                echo "Terminal program ${HOST_TERM} not found." >&2
+                exit 1
+            fi
+
+            if [ ! -x ${host_term_actual} ]; then
+                echo "Terminal program ${host_term_actual} is not executable." >&2
+                exit 1
+            fi
+
+            HOST_TERM=${host_term_actual}
+            SERIAL=y
+            shift
+            ;;
+        -h)
+            usage
+            ;;
+        -V)
+            echo "${CMD} version ${VER}"
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+    esac
+done
+
+MODE="${1}"
+shift
+
+[ -z "${MODE}" ] && usage
+
+# clean up stale pid files
+for pidfile in $(ls -1 ${RUN}/*.pid 2>/dev/null) ; do
+    pid="$(cat ${pidfile})"
+    ps -p ${pid} >/dev/null 2>&1
+    [ $? -eq 1 ] && rm -f ${pidfile}
+done
+
+case "${MODE}" in
+    start)
+        guests_start $*
+        ;;
+    stop)
+        guests_stop $*
+        ;;
+    install)
+        guests_install $*
+        ;;
+    list)
+        guests_list
+        ;;
+    *)
+        usage
+        ;;
+esac
+
+exit ${RETVAL}

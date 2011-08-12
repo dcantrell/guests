@@ -1,0 +1,64 @@
+OpenBSD qemu guest management tool
+
+The 'guests' tool helps manage daemonized qemu guests.  It helps you install
+them, manage their settings, and start them up either manually or at boot time.
+
+
+Help:
+    guests -h
+
+
+Installation:
+
+1) Choose a location for virt guests.  This directory will contain the disk
+   images, guest configuration files, and the actual guests script.  You want
+   this directory to be on a filesystem with plenty of available space.
+
+       mkdir -p /var/guests
+
+2) Create the directory tree:
+
+       cd /var/guests
+       mkdir guests.d           # individual guest configuration files go here
+       mkdir install            # I use this to store install media (ISO files)
+
+3) Install the core files:
+
+       install -m 0755 guests /var/guests/guests
+       install -m 0644 guests.conf /var/guests/guests.conf
+
+4) Edit guests.conf to suit your system.
+
+
+Usage:
+
+All of these commands are executed from within /var/guests.
+
+1) Start or stop all guests:
+
+       ./guests start
+       ./guests stop
+
+2) List available guests:
+
+       ./guests list
+
+3) Start or stop a specific guest:
+
+       ./guests start GUESTNAME
+       ./guests stop GUESTNAME
+
+4) Start or stop specific guests:
+
+       ./guests start GUESTNAME1 GUESTNAME3
+       ./guests stop GUESTNAME1 GUESTNAME3
+
+5) Install a new guest (e.g., OpenBSD 4.9):
+
+       curl -o install/OpenBSD-4.9-amd64.iso \
+           http://ftp.openbsd.org/pub/OpenBSD/4.9/amd64/cd49.iso
+       ./guests install \
+           OpenBSD-4.9-amd64 \
+           20G \
+           install/OpenBSD-4.9-amd64.iso \
+           x86_64
