@@ -1,2 +1,3 @@
 *.img
+guests.d/*.conf
 install
