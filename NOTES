@@ -30,12 +30,40 @@ HOST OPERATING SYSTEMS
        pfctl -e
        pfctl -f /etc/pf.conf
 
+3) If you want to use more than 256M of memory for your guests, you
+   will need to edit /etc/login.conf and change the datasize setting
+   for your user's login class.  Your login class is listed in the
+   5th field of /etc/master.passwd.  Match this to a class definition
+   in /etc/login.conf and change accordingly.
+
+   NOTE:  You can set current and maximum limits in login.conf.  Users
+   of bash may experience problems with cur and max limits where ulimit
+   won't let them increase to the max limit.  /bin/ksh does not seem
+   to exhibit this problem, so keep that in mind.  If you are on a
+   single user system, it may be easier to just specify a single
+   datasize= setting rather than both a cur and max setting.
+
+   On my system, I have datasize=infinity: and maxproc=infinity:
+
+
 
 =======================
 GUEST OPERATING SYSTEMS
 =======================
 
+OpenBSD 5.0
+
+    1) Make sure you switch the default console to com0 when prompted to
+       do so.
+    2) Edit /etc/hostname.em0 and replace the 'dhcp' line with a line
+       such as:
+           inet 172.31.1.100 255.255.255.0 172.31.1.255
+    3) Edit /etc/resolv.conf and replace the nameserver line with:
+           nameserver 4.2.2.2
+    4) Edit /etc/myname to suit this guest.
+
 Fedora 14
+
     1) Boot with 'noapic' kernel option.
     2) After install, switch to tty2 and edit /mnt/sysimage/etc/grub.conf
            a) Make sure 'console=ttyS0' is on the kernel command line.
@@ -58,3 +86,5 @@ Fedora 14
            for unit in capi isdn mdmonitor netfs NetworkManager pcscd ypbind ; do
                systemctl disable ${unit}.service
            done
+
+Red Hat Enterprise Linux 6.x
