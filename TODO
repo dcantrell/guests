@@ -3,4 +3,6 @@
 - Clean up stdio/stderr usage and log messages
 - If run from an interactive shell, send msgs to stdout
 - If run from rc.local, send msgs to syslog
-- Fix guests_start() so that serial and monitor ports do not collide
+- Support per-guest memory setting
+- Restore /etc/login.conf
+- Create my own login class similar to staff, update recovery scripts
