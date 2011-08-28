@@ -212,11 +212,11 @@ guests_start() {
 
             serialport=$((${sport} + ${offset}))
             nc 127.0.0.1 ${serialport} < /dev/null > /dev/null 2>&1
-            [ $? -ne 0 ] && portsearch=1
+            [ $? -eq 0 ] && portsearch=1
 
             monitorport=$((${mport} + ${offset}))
             nc 127.0.0.1 ${monitorport} < /dev/null > /dev/null 2>&1
-            [ $? -ne 0 ] && portsearch=1
+            [ $? -eq 0 ] && portsearch=1
 
             offset=$((${offset} + 1))
         done
@@ -399,8 +399,12 @@ while [ $# -ge 0 ]; do
     esac
 done
 
-MODE="${1}"
-shift
+if [ -z "${1}" ]; then
+    usage
+else
+    MODE="${1}"
+    shift
+fi
 
 [ -z "${MODE}" ] && usage
 
