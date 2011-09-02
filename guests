@@ -74,6 +74,10 @@ usage() {
         fi
     done
 
+    echo
+    echo "The functionality level of each architecture varies.  Be sure to check the" >&2
+    echo "qemu documentation or wiki for the latest information." >&2
+
     exit 1
 }
 
