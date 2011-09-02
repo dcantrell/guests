@@ -3,6 +3,7 @@
 - Clean up stdio/stderr usage and log messages
 - If run from an interactive shell, send msgs to stdout
 - If run from rc.local, send msgs to syslog
-- Support per-guest memory setting
-- Restore /etc/login.conf
-- Create my own login class similar to staff, update recovery scripts
+- Do not bring down host tunnel or bridge if other guests are running
+- Separate out root-specifics to a helper script, do not launch qemu
+  as root
+- Remove kqemu support?
