@@ -58,9 +58,9 @@ usage() {
     echo "                                         values listed below." >&2
     echo "    list                                 List guest names and descriptions" >&2
     echo
-    echo "The optional guest name for the start and stop commands allow you to work with" >&2
-    echo "one or more specific guests.  If no guest names are given, all guests will" >&2
-    echo "start or stop depending on the command given." >&2
+    echo "The optional guest name for the start and stop commands allow you to work" >&2
+    echo "with one or more specific guests.  If no guest names are given, all guests" >&2
+    echo "will start or stop depending on the command given." >&2
     echo
     echo "The optional arch name is one of:" >&2
 
