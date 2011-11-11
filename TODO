@@ -6,4 +6,3 @@
 - Do not bring down host tunnel or bridge if other guests are running
 - Separate out root-specifics to a helper script, do not launch qemu
   as root
-- Remove kqemu support?
