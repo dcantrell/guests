@@ -76,7 +76,7 @@ Fedora 14
     4) Edit /mnt/sysimage/etc/sysconfig/network-scripts/ifcfg-eth0 for
        static networking.  Add:
            IPADDR=
-           MACADDR=
+           HWADDR=
            NETMASK=255.255.255.0
            BROADCAST=172.31.1.255
            DNS1=4.2.2.2
@@ -88,4 +88,23 @@ Fedora 14
                systemctl disable ${unit}.service
            done
 
-Red Hat Enterprise Linux 6.x
+Red Hat Enterprise Linux 6.x (and Scientific Linux 6.x)
+
+    1) Boot with 'noapic' kernel option.
+    2) After install, switch to tty2 and edit /mnt/sysimage/etc/grub.conf
+           a) Replace 'rhgb quiet' with 'console=ttyS0' on the kernel line.
+           b) Add 'terminal serial' to the main grub configuration.
+    3) Make sure the eth* lines are removed from:
+           /mnt/sysimage/etc/udev/rules.d/70-persistent-net.rules
+       On boot up, a new rule will be added for eth0 with the correct MAC
+       address.
+    4) Edit /mnt/sysimage/etc/sysconfig/network-scripts/ifcfg-eth0 for
+       static networking.  Add:
+           IPADDR=
+           HWADDR=
+           NETMASK=255.255.255.0
+           BROADCAST=172.31.1.255
+           DNS1=4.2.2.2
+           DOMAIN=virt.burdell.org
+    5) Edit /mnt/sysimage/etc/sysconfig/network and set the HOSTNAME and
+       GATEWAY=172.31.1.1
